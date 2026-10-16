@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Agent Behavior Intelligence (Node / Fabric Apps) ---
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+.env.local
+*.local
+# Rayfin deployment state and generated config (contain workspace/item identifiers)
+rayfin/.env*
+rayfin/.deployments.json
+rayfin/.temp/
+rayfin/.*.tmp
+rayfin.config.json

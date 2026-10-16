@@ -1,0 +1,8 @@
+[
+{"id":"agt-support-triage","name":"Support Triage","description":"Classifies inbound support messages, searches the knowledge base, and drafts a reply.","tags":["support","customer"],"created_at":"2026-03-02T09:00:00Z"},
+{"id":"agt-invoice-recon","name":"Invoice Reconciliation","description":"Matches supplier invoices to ERP purchase orders and flags exceptions.","tags":["finance","batch"],"created_at":"2026-04-15T09:00:00Z"},
+{"id":"agt-research","name":"Research Assistant","description":"Plans a research question, searches and reads web sources, and writes a summary report.","tags":["research"],"created_at":"2026-05-20T09:00:00Z"},
+{"id":"agt-policy-qa","name":"Policy Q&A","description":"Answers employee questions about HR policy documents. Few runs: demonstrates small-sample suppression.","tags":["support","hr"],"created_at":"2026-09-01T09:00:00Z"},
+{"id":"agt-dq-monitor","name":"Data Quality Monitor","description":"Daily profile of key tables compared with a baseline; alerts on drift.","tags":["data","scheduled"],"foundry_url":"javascript:alert(1)","created_at":"2026-02-01T09:00:00Z"},
+{"id":"agt-support-triage","name":"Support Triage (duplicate record)","description":"Classifies inbound support messages, searches the knowledge base, and drafts a reply.","tags":["support","customer"],"created_at":"2026-03-02T09:00:00Z"}
+]

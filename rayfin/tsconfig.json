@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "outDir": ".temp/compiled",
+    "rootDir": ".",
+    "declaration": true,
+    "composite": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext"
+  },
+  "include": ["data/**/*"]
+}

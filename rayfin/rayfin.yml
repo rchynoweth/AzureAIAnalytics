@@ -1,0 +1,43 @@
+# Fabric Apps (Rayfin) deployment configuration.
+# `npx rayfin up` creates the app's database tables, deploys the server-side
+# functions, and serves the built ./dist from Fabric.
+# Reference: https://learn.microsoft.com/fabric/apps/overview
+# Note: `rayfin up` rewrites this file (drops comments, adds your hosting URL and local
+# ports to allowedRedirectUris). Don't commit that change: `git checkout rayfin/rayfin.yml`.
+id: agent-behavior-intelligence
+name: Agent Behavior Intelligence
+version: 0.2.0
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+      # Lets a Microsoft Entra sign-in (standalone browser, or the Rayfin CLI during
+      # local development) be exchanged for an app session.
+      externalEntraExchange: true
+    password:
+      enabled: false
+    allowedRedirectUris:
+      - http://localhost:5173
+  data:
+    # Synced Foundry agents, runs, and steps (tables in rayfin/data/schema.ts).
+    enabled: true
+    dialect: mssql
+  functions:
+    # Server-side calls to Microsoft Foundry as the app identity (rayfin/functions).
+    enabled: true
+    buildCommand: npm run build
+    auth:
+      type: application
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build
+    indexDocument: index.html
+    # Only signed-in users with access to the Fabric item can load the app assets.
+    assetAccess: protected
+  storage:
+    enabled: false
+secrets:
+  - name: FOUNDRY_PROJECT_ENDPOINT
+    description: Foundry project endpoint, e.g. https://<account>.services.ai.azure.com/api/projects/<project>

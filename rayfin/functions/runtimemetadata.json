@@ -1,0 +1,245 @@
+{
+  "schemaVersion": "2.0",
+  "functions": [
+    {
+      "functionName": "testFoundryConnection",
+      "delegateParameters": [
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "syncFoundry",
+      "delegateParameters": [
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "knowledgeStatus",
+      "delegateParameters": [
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "knowledgeSaveAgent",
+      "delegateParameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 1,
+          "isFabricParameter": false
+        },
+        {
+          "name": "instructions",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 2,
+          "isFabricParameter": false
+        },
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 3,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "knowledgeUpload",
+      "delegateParameters": [
+        {
+          "name": "fileName",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        },
+        {
+          "name": "contentBase64",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 1,
+          "isFabricParameter": false
+        },
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 2,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "knowledgeRemove",
+      "delegateParameters": [
+        {
+          "name": "fileId",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        },
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 1,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "knowledgeReindex",
+      "delegateParameters": [
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "knowledgeAsk",
+      "delegateParameters": [
+        {
+          "name": "question",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        },
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 1,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "recordUsage",
+      "delegateParameters": [
+        {
+          "name": "type",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        },
+        {
+          "name": "detail",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 1,
+          "isFabricParameter": false
+        },
+        {
+          "name": "userEmail",
+          "type": "string",
+          "optional": false,
+          "hasDefault": false,
+          "position": 2,
+          "isFabricParameter": false
+        },
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 3,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    },
+    {
+      "functionName": "usageSummary",
+      "delegateParameters": [
+        {
+          "name": "ctx",
+          "type": "RayfinContext<Schema, AudienceType.AzureAI>",
+          "optional": false,
+          "hasDefault": false,
+          "position": 0,
+          "isFabricParameter": false
+        }
+      ],
+      "contextAudiences": [
+        "AzureAI"
+      ]
+    }
+  ]
+}
