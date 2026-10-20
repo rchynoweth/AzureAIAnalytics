@@ -43,12 +43,15 @@ required — deployment uses the Rayfin CLI's browser sign-in.
 ```sh
 npx rayfin login                                   # once per machine
 npm run deploy -- --workspace-id <workspace-id>    # create or update the Fabric App
-npx rayfin secret set FOUNDRY_PROJECT_ENDPOINT     # https://<account>.services.ai.azure.com/api/projects/<project>
 ```
 
 `rayfin up` rewrites `rayfin/rayfin.yml` with your tenant's hosting URL; don't commit that change
-(`git checkout rayfin/rayfin.yml`). After deploying, open the hosting URL, confirm sign-in is
-required, then use **Settings → Live connection** to test and sync.
+(`git checkout rayfin/rayfin.yml`). After deploying, open the hosting URL, sign in, then in
+**Settings → Live connection** paste your Foundry project endpoint
+(`https://<account>.services.ai.azure.com/api/projects/<project>`), test the connection, and sync —
+no CLI secret needed. (You can still pre-set it with `npx rayfin secret set FOUNDRY_PROJECT_ENDPOINT`
+if you prefer.) To enable **Open in Foundry** deep links, paste one agent link from your portal in
+Settings too.
 
 ## Commands
 

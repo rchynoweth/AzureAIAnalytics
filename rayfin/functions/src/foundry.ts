@@ -36,7 +36,9 @@ export async function foundry(base: string, token: string, method: string, path:
     body: isForm ? body : body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    const hint = res.status === 401 || res.status === 403 ? ' (check that the app owner has the Foundry User role on the project)' : '';
+    const hint = res.status === 401 || res.status === 403
+      ? ' (the app identity needs the Foundry User role on the project; uploading and indexing documents also need Storage Blob Data Contributor on the project\'s storage account)'
+      : '';
     throw new Error(`Foundry returned HTTP ${res.status} for ${method} ${path.split('?')[0]}${hint}.`);
   }
   const text = await res.text();
@@ -60,7 +62,12 @@ const fromUnix = (seconds: unknown) => (typeof seconds === 'number' ? new Date(s
 
 export function toAgentRow(agent: Json): AgentRow {
   const latest = agent.versions?.latest ?? {};
-  const tags = Object.entries(latest.metadata ?? {}).map(([k, v]) => `${k}:${v}`);
+  // Show metadata as short "key:value" tags, but skip our own abi_* markers and any non-scalar
+  // (object/array) or oversized values, which would render as an ugly JSON blob.
+  const tags = Object.entries(latest.metadata ?? {})
+    .filter(([k, v]) => !k.startsWith('abi_') && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'))
+    .map(([k, v]) => `${k}:${v}`)
+    .filter((t) => t.length <= 60);
   return {
     source_id: agent.name,
     name: agent.name,
@@ -110,7 +117,9 @@ export const isFinished = (status: string | undefined) => status === 'completed'
 export const INSUFFICIENT_EVIDENCE = 'I could not find enough support for that answer in the currently indexed collection.';
 
 export const GROUNDING_INSTRUCTIONS =
-  'Answer only from the file search results. Cite every statement. ' +
+  'Answer only from the file search results, and cite the documents you use. ' +
+  'Give a thorough, in-depth answer, formatted in Markdown for easy reading: open with a one- or two-sentence summary, ' +
+  'use "-" bullet points for lists of findings, steps, or items, use **bold** for key terms, and use "#" headings when the answer has several sections. ' +
   `If the results do not contain the answer, reply exactly: "${INSUFFICIENT_EVIDENCE}" ` +
   'Do not use general knowledge.';
 

@@ -22,10 +22,16 @@ type Message = { role: 'user'; text: string } | { role: 'assistant'; answer: Ans
 
 const ACCEPT = '.pdf,.docx,.pptx,.md,.txt,.html,.json';
 const HINT = 'PDF, Word, PowerPoint, Markdown, text, HTML, or JSON · up to 4 MB each';
+const DEFAULT_SAMPLES = [
+  'What are the main takeaways from these documents?',
+  'What deliverables or outcomes are described?',
+  'What recommendations or next steps are suggested?',
+];
 
 export function Knowledge({ client, record, settings }: { client: AppClient | null; record?: Recorder; settings?: Settings }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [samples, setSamples] = useState<string[] | null>(null);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -37,9 +43,15 @@ export function Knowledge({ client, record, settings }: { client: AppClient | nu
     }
   }, [client]);
 
+  const loadSamples = useCallback(async () => {
+    if (!client) return;
+    try { setSamples((await client.functions.getKnowledgeSamples.invoke()).samples); } catch { setSamples([]); }
+  }, [client]);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadSamples();
+  }, [load, loadSamples]);
 
   // While Foundry is still processing documents, check again every 5 seconds.
   const processing = status?.documents.some((d) => d.status === 'in_progress') ?? false;
@@ -70,9 +82,11 @@ export function Knowledge({ client, record, settings }: { client: AppClient | nu
       {!status && !error && <p className="loading-line"><Spinner /> Loading the collection…</p>}
       {status && (
         <div className="knowledge">
-          <Chat client={client} status={status} record={record} />
+          <Chat client={client} status={status} samples={samples && samples.length ? samples : DEFAULT_SAMPLES} record={record} />
+          <AgentPanel client={client} status={status} reload={load} record={record} />
           <Uploader client={client} reload={load} record={record} />
           {status.documents.length > 0 && <DocumentList client={client} status={status} processing={processing} reload={load} record={record} />}
+          <SamplesPanel client={client} current={samples ?? []} onChanged={loadSamples} />
           <ManagePanel client={client} status={status} settings={settings} reload={load} record={record} />
         </div>
       )}
@@ -81,6 +95,119 @@ export function Knowledge({ client, record, settings }: { client: AppClient | nu
 }
 
 /** Collapsed admin: where the data lives (with Foundry links) and a full-cleanup delete. */
+const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
+
+/** Explicit answering-agent setup: name, model, and instructions, created in the user's Foundry project. */
+function AgentPanel({ client, status, reload, record }: { client: AppClient; status: Status; reload: () => Promise<void>; record?: Recorder }) {
+  const a = status.agent;
+  const [form, setForm] = useState({ name: a?.name ?? 'knowledge-assistant', model: a?.model ?? status.deployments[0] ?? '', instructions: a?.instructions ?? status.defaultInstructions });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Re-seed the form when the deployed agent changes (after create, rename, or delete).
+  useEffect(() => {
+    setForm({ name: a?.name ?? 'knowledge-assistant', model: a?.model ?? status.deployments[0] ?? '', instructions: a?.instructions ?? status.defaultInstructions });
+  }, [a?.name, a?.model, a?.instructions, status.deployments.join('|'), status.defaultInstructions]);
+
+  const name = form.name.trim();
+  const nameOk = AGENT_NAME_RE.test(name);
+  const isCreate = !a;
+  const isRename = Boolean(a) && name !== a!.name;
+  const dirty = !a || name !== a.name || form.model !== a.model || form.instructions !== a.instructions;
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nameOk || !form.model) return;
+    if (isRename && !window.confirm(`Rename replaces the agent "${a!.name}" with "${name}" in your Foundry project. Continue?`)) return;
+    setBusy(true);
+    try {
+      const r = await client.functions.knowledgeSaveAgent.invoke({ name, model: form.model, instructions: form.instructions });
+      setMessage({ ok: r.ok, text: r.message });
+      if (r.ok) record?.('agent_saved', name);
+      await reload();
+    } catch (err) {
+      setMessage({ ok: false, text: errorText(err) });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <details className="panel manage" open={!a}>
+      <summary>Answering agent {a ? `· ${a.name}` : '· not created yet'}</summary>
+      <p className="meta">
+        {a
+          ? <>A Foundry agent in your project (<strong>{a.name}</strong>{a.version ? `, v${a.version}` : ''} · {a.model}). Saving adds a new version; renaming replaces it.</>
+          : 'Name the agent and create it in your Foundry project. It answers questions using file search over your documents. (One is also created automatically on your first upload or question.)'}
+      </p>
+      <form onSubmit={save}>
+        <div className="field">
+          <label htmlFor="k-agent-name">Agent name</label>
+          <input id="k-agent-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. knowledge-assistant" aria-invalid={Boolean(form.name && !nameOk)} />
+          <small>Letters, digits, and hyphens. This becomes the agent's name in your Foundry portal.</small>
+          {form.name.length > 0 && !nameOk && <p className="field-error" role="alert">Use 1–63 letters, digits, or hyphens, starting with a letter or digit.</p>}
+        </div>
+        <div className="field">
+          <label htmlFor="k-agent-model">Model deployment</label>
+          <select id="k-agent-model" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}>
+            {status.deployments.length === 0 && <option value="">No chat deployments found</option>}
+            {status.deployments.map((d) => <option key={d}>{d}</option>)}
+          </select>
+          <small>A chat model deployment in your Foundry project.</small>
+        </div>
+        <div className="field">
+          <label htmlFor="k-agent-instructions">Instructions</label>
+          <textarea id="k-agent-instructions" rows={4} value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} />
+          <small>The app only shows answers that cite a document from the collection, whatever the instructions say.</small>
+        </div>
+        {isCreate && nameOk && <p className="meta">This creates a new agent named <strong>{name}</strong> in your Foundry project.</p>}
+        <div className="actions">
+          <button type="submit" className="primary" disabled={busy || !nameOk || !form.model || (!isCreate && !dirty)}>
+            {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent in Foundry' : isRename ? 'Rename and save' : dirty ? 'Save changes' : 'Saved'}
+          </button>
+        </div>
+      </form>
+      {message && <div className={`notice ${message.ok ? 'notice-info' : 'notice-error'}`} role="status">{message.text}</div>}
+    </details>
+  );
+}
+
+/** Deployment-wide suggested questions shown as chips in the chat (empty = app defaults). */
+function SamplesPanel({ client, current, onChanged }: { client: AppClient; current: string[]; onChanged: () => void }) {
+  const [text, setText] = useState(current.join('\n'));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => { setText(current.join('\n')); }, [current]);
+
+  const save = async () => {
+    const list = text.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 6);
+    setBusy(true);
+    try {
+      await client.functions.setKnowledgeSamples.invoke({ samples: list });
+      setMessage({ ok: true, text: list.length ? 'Saved for everyone on this deployment.' : 'Cleared — the default questions will show.' });
+      onChanged();
+    } catch (e) {
+      setMessage({ ok: false, text: errorText(e) });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <details className="panel manage">
+      <summary>Suggested questions</summary>
+      <p className="meta">The clickable prompts shown in the chat before the first message. One per line, up to 6. Leave empty to use the defaults. Saved for the whole deployment.</p>
+      <div className="field">
+        <label htmlFor="k-samples" className="sr-only">Suggested questions</label>
+        <textarea id="k-samples" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder={DEFAULT_SAMPLES.join('\n')} />
+      </div>
+      <div className="actions">
+        <button type="button" className="primary" onClick={() => void save()} disabled={busy}>{busy ? 'Saving…' : 'Save questions'}</button>
+      </div>
+      {message && <div className={`notice ${message.ok ? 'notice-info' : 'notice-error'}`} role="status">{message.text}</div>}
+    </details>
+  );
+}
+
 function ManagePanel({ client, status, settings, reload, record }: { client: AppClient; status: Status; settings?: Settings; reload: () => Promise<void>; record?: Recorder }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -280,17 +407,13 @@ function DocumentList({ client, status, processing, reload, record }: { client: 
   );
 }
 
-function Chat({ client, status, record }: { client: AppClient; status: Status; record?: Recorder }) {
+function Chat({ client, status, samples, record }: { client: AppClient; status: Status; samples: string[]; record?: Recorder }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [asking, setAsking] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const indexed = status.documents.filter((d) => d.status === 'completed');
   const ready = indexed.length > 0; // the answering agent is created automatically on the first question
-  const samples = [
-    ...indexed.slice(0, 2).map((d) => `What are the key points in ${d.name.replace(/\.[^.]+$/, '')}?`),
-    'What steps or processes do the documents describe?',
-  ];
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });

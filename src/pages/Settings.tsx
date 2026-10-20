@@ -85,8 +85,35 @@ export function Settings({ settings, onSaved, auth, onSynced, record, onFoundryL
 }
 
 function LiveConnection({ client, onSynced, record }: { client: AppClient | null; onSynced: () => void; record: Recorder }) {
-  const [busy, setBusy] = useState<'test' | 'sync' | null>(null);
+  const [busy, setBusy] = useState<'test' | 'sync' | 'endpoint' | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [endpoint, setEndpoint] = useState('');
+  const [hasSecret, setHasSecret] = useState(false);
+  const [savedEndpoint, setSavedEndpoint] = useState('');
+  const [identity, setIdentity] = useState<{ name: string; objectId: string; appId: string; kind: string } | null>(null);
+
+  useEffect(() => {
+    if (!client) return;
+    client.functions.getFoundryEndpoint.invoke().then(
+      (r) => { setEndpoint(r.endpoint); setSavedEndpoint(r.endpoint); setHasSecret(r.hasSecret); },
+      () => {},
+    );
+    client.functions.foundryIdentity.invoke().then(setIdentity, () => {});
+  }, [client]);
+
+  const saveEndpoint = async () => {
+    setBusy('endpoint');
+    try {
+      const r = await client!.functions.setFoundryEndpoint.invoke({ endpoint: endpoint.trim() });
+      setResult({ ok: r.ok, text: r.message });
+      if (r.ok) setSavedEndpoint(endpoint.trim());
+    } catch (e) {
+      setResult({ ok: false, text: errorText(e) });
+    }
+    setBusy(null);
+  };
+
+  const connected = Boolean(endpoint.trim() || hasSecret);
 
   const test = async () => {
     setBusy('test');
@@ -119,14 +146,51 @@ function LiveConnection({ client, onSynced, record }: { client: AppClient | null
     <section className="panel" aria-label="Live connection">
       <h2>Live connection</h2>
       <p>
-        Source: the Microsoft Foundry project set in the deployment secret <code>FOUNDRY_PROJECT_ENDPOINT</code>. Sync copies agents, runs, and
-        their steps into this app's database; Live mode reads from there.
+        Connect to your Microsoft Foundry project, then sync: it copies agents, runs, and their steps into this app's database,
+        which Live mode reads from.
       </p>
       {!client ? <p className="meta">Available in the deployed app after Fabric sign-in.</p> : (
-        <div className="actions">
-          <button type="button" onClick={() => void test()} disabled={busy !== null}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button>
-          <button type="button" className="primary" onClick={() => void sync()} disabled={busy !== null}>{busy === 'sync' ? 'Syncing… (up to 4 min)' : 'Sync from Foundry'}</button>
-        </div>
+        <>
+          <div className="field">
+            <label htmlFor="foundry-endpoint">Foundry project endpoint</label>
+            <div className="inline-form">
+              <input
+                id="foundry-endpoint"
+                type="url"
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                placeholder="https://<account>.services.ai.azure.com/api/projects/<project>"
+                aria-describedby="foundry-endpoint-hint"
+              />
+              <button type="button" onClick={() => void saveEndpoint()} disabled={busy !== null || endpoint.trim() === savedEndpoint}>
+                {busy === 'endpoint' ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            <small id="foundry-endpoint-hint">
+              Copy it from your Foundry project's overview. Saved for the whole deployment.
+              {hasSecret && !endpoint.trim() && ' A deployment secret is set and will be used until you enter one here.'}
+            </small>
+          </div>
+          <div className="actions">
+            <button type="button" onClick={() => void test()} disabled={busy !== null || !connected}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button>
+            <button type="button" className="primary" onClick={() => void sync()} disabled={busy !== null || !connected}>{busy === 'sync' ? 'Syncing… (up to 4 min)' : 'Sync from Foundry'}</button>
+          </div>
+          {!connected && <p className="meta">Enter your Foundry project endpoint above to enable Test and Sync.</p>}
+          {identity && (identity.objectId || identity.name) && (
+            <details className="manage">
+              <summary>App identity (grant this principal the Foundry + storage roles)</summary>
+              <dl className="facts">
+                <dt>Name</dt><dd>{identity.name || <span className="muted">—</span>} <span className="muted">({identity.kind})</span></dd>
+                <dt>Object ID</dt><dd><code>{identity.objectId || '—'}</code></dd>
+                <dt>App ID</dt><dd><code>{identity.appId || '—'}</code></dd>
+              </dl>
+              <p className="meta">
+                This is the identity the app presents to Foundry. In the Foundry project, give it the <strong>Foundry User</strong> role; on the
+                project's storage account, give it <strong>Storage Blob Data Contributor</strong> (uploads and indexing). Search by the Object ID in Azure RBAC.
+              </p>
+            </details>
+          )}
+        </>
       )}
       {result && <div className={`notice ${result.ok ? 'notice-info' : 'notice-error'}`} role="status">{result.text}</div>}
     </section>

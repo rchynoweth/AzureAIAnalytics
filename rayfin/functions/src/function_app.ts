@@ -23,13 +23,40 @@ const COLLECTION = 'agent-behavior-intelligence'; // the one Foundry vector stor
 const KNOWLEDGE_ROLE = 'knowledge'; // metadata tag that marks this app's knowledge agent
 const DEFAULT_AGENT_NAME = 'knowledge-assistant'; // auto-created on first use; no configuration needed
 
-const connect = (ctx: Ctx) => ({ base: projectBase(ctx.Secrets.FOUNDRY_PROJECT_ENDPOINT), token: ctx.Tokens.AzureAI });
+/** The Foundry project this deployment talks to: the in-app setting (Settings → Live connection)
+ * wins, else the CLI secret FOUNDRY_PROJECT_ENDPOINT. The endpoint is a URL, not a credential. */
+async function connect(ctx: Ctx): Promise<{ base: string; token: string }> {
+  const endpoint = await foundryEndpoint(ctx);
+  if (!endpoint) throw new Error('No Foundry project is connected. Open Settings → Live connection and set your Foundry project endpoint.');
+  return { base: projectBase(endpoint), token: ctx.Tokens.AzureAI };
+}
+
+async function foundryEndpoint(ctx: Ctx): Promise<string> {
+  const configured = await getConfigValue(ctx, 'foundry_endpoint');
+  if (configured) return configured;
+  try { return (ctx.Secrets.FOUNDRY_PROJECT_ENDPOINT ?? '').trim(); } catch { return ''; } // secret not set
+}
+
+async function getConfigValue(ctx: Ctx, key: string): Promise<string> {
+  const row = (await allRows(ctx.getDataClient().AppConfig, ['key', 'value'])).find((r) => r.key === key);
+  return (row?.value ?? '').trim();
+}
+
+async function upsertConfig(ctx: Ctx, entries: Record<string, string>): Promise<void> {
+  const db = ctx.getDataClient();
+  const ids = new Map((await allRows(db.AppConfig, ['id', 'key'])).map((r) => [r.key, r.id]));
+  for (const [key, value] of Object.entries(entries)) {
+    const id = ids.get(key);
+    if (id) await db.AppConfig.update({ id }, { key, value });
+    else await db.AppConfig.create({ key, value });
+  }
+}
 
 // ---- Agent behavior data ------------------------------------------------------
 
 udf.func('testFoundryConnection', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean; message: string; project: string | null }> => {
   try {
-    const { base, token } = connect(ctx);
+    const { base, token } = await connect(ctx);
     const page = await foundry(base, token, 'GET', '/agents?api-version=v1&limit=100');
     const project = new URL(base).hostname.split('.')[0] + base.slice(base.lastIndexOf('/'));
     return { ok: true, project, message: `Connected. ${page.data?.length ?? 0}${page.has_more ? '+' : ''} agents visible.` };
@@ -38,12 +65,35 @@ udf.func('testFoundryConnection', async (ctx: RayfinContext<Schema, AudienceType
   }
 }, []);
 
+/** Decodes a JWT payload (no signature check) — just the identity claims, which are not secret. */
+function tokenClaims(token: string): Record<string, any> {
+  try {
+    const payload = token.split('.')[1] ?? '';
+    return JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/** The identity the app presents to Foundry — so an admin knows which principal to grant roles to. */
+udf.func('foundryIdentity', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ name: string; objectId: string; appId: string; tenantId: string; kind: string }> => {
+  const c = tokenClaims(ctx.Tokens.AzureAI);
+  const appId = c.appid ?? c.azp ?? '';
+  return {
+    name: c.name ?? c.upn ?? c.unique_name ?? c.app_displayname ?? '',
+    objectId: c.oid ?? '',
+    appId,
+    tenantId: c.tid ?? '',
+    kind: c.idtyp ?? (appId && !c.upn && !c.name ? 'application (service principal)' : 'user'),
+  };
+}, []);
+
 export interface SyncResult { agents: number; runsSaved: number; runsSkipped: number; stepsSaved: number; partial: boolean }
 
 /** Copies Foundry agents, runs (responses), and steps (output items) into the app database. Newest runs first. */
 udf.func('syncFoundry', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<SyncResult> => {
   const started = Date.now();
-  const { base, token } = connect(ctx);
+  const { base, token } = await connect(ctx);
   const db = ctx.getDataClient();
 
   const agents = (await listAll(base, token, '/agents?api-version=v1', 1000)).map(toAgentRow);
@@ -159,7 +209,7 @@ async function chatDeployments(base: string, token: string): Promise<string[]> {
 }
 
 udf.func('knowledgeStatus', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<KnowledgeStatus> => {
-  const { base, token } = connect(ctx);
+  const { base, token } = await connect(ctx);
   const [store, agent, deployments] = await Promise.all([findStore(base, token), findAgent(base, token), chatDeployments(base, token)]);
   const documents: KnowledgeDocument[] = [];
   for (const f of store ? await storeFiles(base, token, store.id) : []) {
@@ -186,9 +236,28 @@ udf.func('knowledgeStatus', async (ctx: RayfinContext<Schema, AudienceType.Azure
   };
 }, []);
 
+const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/; // Foundry agent names: letters, digits, hyphens
+
+/** Creates or updates the knowledge agent with a chosen name, model, and instructions (a new Foundry
+ * agent version). Renaming replaces the old agent. Explicit alternative to the auto-created default. */
+udf.func('knowledgeSaveAgent', async (name: string, model: string, instructions: string, ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean; message: string }> => {
+  if (!AGENT_NAME_RE.test((name ?? '').trim())) return { ok: false, message: 'Use 1–63 letters, digits, or hyphens, starting with a letter or digit.' };
+  const { base, token } = await connect(ctx);
+  if (!(await chatDeployments(base, token)).includes(model)) return { ok: false, message: `"${model}" is not a chat model deployment in this Foundry project.` };
+  const store = await ensureStore(base, token);
+  const previous = await findAgent(base, token);
+  const saved = await foundry(base, token, 'POST', `/agents/${encodeURIComponent(name.trim())}/versions?api-version=v1`, {
+    description: 'Answers questions from the Agent Behavior Intelligence knowledge collection.',
+    metadata: { abi_role: KNOWLEDGE_ROLE },
+    definition: { kind: 'prompt', model, instructions: (instructions ?? '').trim().slice(0, 8000) || GROUNDING_INSTRUCTIONS, tools: [{ type: 'file_search', vector_store_ids: [store.id] }] },
+  });
+  if (previous && previous.name !== name.trim()) await foundry(base, token, 'DELETE', `/agents/${encodeURIComponent(previous.name)}?api-version=v1`);
+  return { ok: true, message: `Saved ${name.trim()} (version ${saved.version}) in Foundry.` };
+}, []);
+
 /** Full cleanup: deletes this app's knowledge agent, every document, and the vector store from Foundry. */
 udf.func('knowledgeDeleteAll', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean; message: string; agent: boolean; files: number; index: boolean }> => {
-  const { base, token } = connect(ctx);
+  const { base, token } = await connect(ctx);
   const [agent, store] = await Promise.all([findAgent(base, token), findStore(base, token)]);
   if (!agent && !store) return { ok: false, message: 'There is nothing to delete.', agent: false, files: 0, index: false };
   if (agent) await foundry(base, token, 'DELETE', `/agents/${encodeURIComponent(agent.name)}?api-version=v1`);
@@ -207,19 +276,24 @@ udf.func('knowledgeUpload', async (fileName: string, contentBase64: string, ctx:
   const bytes = Buffer.from(contentBase64, 'base64');
   const invalid = checkUpload(fileName, bytes.length);
   if (invalid) return { ok: false, message: invalid };
-  const { base, token } = connect(ctx);
-  const form = new FormData();
-  form.append('purpose', 'assistants');
-  form.append('file', new Blob([bytes]), fileName);
-  const file = await foundry(base, token, 'POST', '/openai/v1/files', form);
-  const store = await ensureStore(base, token);
-  await foundry(base, token, 'POST', `/openai/v1/vector_stores/${store.id}/files`, { file_id: file.id, attributes: { abi_collection: COLLECTION } });
-  await ensureAgent(base, token, store.id); // provision the default answering agent on first upload
-  return { ok: true, message: `Received ${fileName}. Foundry is extracting, chunking, embedding, and indexing it.` };
+  try {
+    const { base, token } = await connect(ctx);
+    const form = new FormData();
+    form.append('purpose', 'assistants');
+    form.append('file', new Blob([bytes]), fileName);
+    const file = await foundry(base, token, 'POST', '/openai/v1/files', form);
+    const store = await ensureStore(base, token);
+    await foundry(base, token, 'POST', `/openai/v1/vector_stores/${store.id}/files`, { file_id: file.id, attributes: { abi_collection: COLLECTION } });
+    try { await ensureAgent(base, token, store.id); } catch { /* non-fatal: the file is indexed; the agent can be created from the Knowledge tab */ }
+    return { ok: true, message: `Received ${fileName}. Foundry is extracting, chunking, embedding, and indexing it.` };
+  } catch (e) {
+    // Return the reason to the browser instead of letting the platform report a generic error.
+    return { ok: false, message: e instanceof Error ? e.message : `Upload of ${fileName} failed.` };
+  }
 }, []);
 
 udf.func('knowledgeRemove', async (fileId: string, ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean }> => {
-  const { base, token } = connect(ctx);
+  const { base, token } = await connect(ctx);
   const store = await findStore(base, token);
   const files = store ? await storeFiles(base, token, store.id) : [];
   if (!store || !files.some((f) => f.id === fileId)) return { ok: false }; // only files in this collection
@@ -230,7 +304,7 @@ udf.func('knowledgeRemove', async (fileId: string, ctx: RayfinContext<Schema, Au
 
 /** Re-processes every document: detach and re-attach each file to the collection. */
 udf.func('knowledgeReindex', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ documents: number }> => {
-  const { base, token } = connect(ctx);
+  const { base, token } = await connect(ctx);
   const store = await findStore(base, token);
   if (!store) return { documents: 0 };
   const files = await storeFiles(base, token, store.id);
@@ -244,7 +318,7 @@ udf.func('knowledgeReindex', async (ctx: RayfinContext<Schema, AudienceType.Azur
 /** Asks the knowledge agent. Its conversations are stored in Foundry, so they appear in the behavior analytics. */
 udf.func('knowledgeAsk', async (question: string, ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<Answer & { agent: string | null }> => {
   const q = question.trim().slice(0, 1000);
-  const { base, token } = connect(ctx);
+  const { base, token } = await connect(ctx);
   const store = await findStore(base, token);
   if (!q || !store) return { ...groundedAnswer({}, new Set()), agent: null };
   const agent = await ensureAgent(base, token, store.id); // create the default agent on first use
@@ -259,10 +333,26 @@ udf.func('knowledgeAsk', async (question: string, ctx: RayfinContext<Schema, Aud
   return { ...groundedAnswer(response, fileIds), agent: agent.name };
 }, []);
 
-// ---- Deployment-wide config (shared by all users) -----------------------------
-// Holds the Foundry portal link patterns. The portal URL needs the subscription and resource
-// group, which the Foundry data-plane API does not return, so an admin sets them once (by pasting
-// one portal link) and every user gets working "Open in Foundry" links.
+// ---- Deployment-wide config (shared by all users, stored in AppConfig) --------
+// The Foundry project endpoint (so clients connect from Settings, no CLI needed) and the portal
+// link patterns (the portal URL needs the subscription + resource group the Foundry API omits).
+
+/** The connected Foundry project endpoint set in-app, and whether a CLI secret is also present. */
+udf.func('getFoundryEndpoint', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ endpoint: string; hasSecret: boolean }> => {
+  let hasSecret = false;
+  try { hasSecret = Boolean(ctx.Secrets.FOUNDRY_PROJECT_ENDPOINT); } catch { hasSecret = false; }
+  return { endpoint: await getConfigValue(ctx, 'foundry_endpoint'), hasSecret };
+}, []);
+
+/** Sets the Foundry project endpoint for the whole deployment. Empty clears it (falls back to the secret). */
+udf.func('setFoundryEndpoint', async (endpoint: string, ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean; message: string }> => {
+  const value = (endpoint ?? '').trim();
+  if (value) {
+    try { projectBase(value); } catch (e) { return { ok: false, message: e instanceof Error ? e.message : 'Invalid endpoint.' }; }
+  }
+  await upsertConfig(ctx, { foundry_endpoint: value });
+  return { ok: true, message: value ? 'Saved. Test the connection, then sync.' : 'Cleared.' };
+}, []);
 
 /** Returns the saved Foundry portal link patterns (empty strings when not configured). */
 udf.func('getFoundryLinks', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ agent: string; index: string }> => {
@@ -272,19 +362,29 @@ udf.func('getFoundryLinks', async (ctx: RayfinContext<Schema, AudienceType.Azure
 
 /** Saves the Foundry portal link patterns for the whole deployment. Empty values clear them. */
 udf.func('setFoundryLinks', async (agent: string, index: string, ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean }> => {
-  const db = ctx.getDataClient();
-  const ids = new Map((await allRows(db.AppConfig, ['id', 'key'])).map((r) => [r.key, r.id]));
   const clean = (s: string, placeholder: string) => {
     const v = (s ?? '').trim().slice(0, 2000);
     return !v || (v.startsWith('https://') && v.includes(placeholder)) ? v : ''; // reject anything that is not a valid template
   };
-  const save = async (key: string, value: string) => {
-    const id = ids.get(key);
-    if (id) await db.AppConfig.update({ id }, { key, value });
-    else await db.AppConfig.create({ key, value });
-  };
-  await save('foundry_agent_url', clean(agent, '{agent_id}'));
-  await save('foundry_index_url', clean(index, '{index_id}'));
+  await upsertConfig(ctx, { foundry_agent_url: clean(agent, '{agent_id}'), foundry_index_url: clean(index, '{index_id}') });
+  return { ok: true };
+}, []);
+
+/** The suggested questions shown as chips in the Knowledge chat (empty = use the app's defaults). */
+udf.func('getKnowledgeSamples', async (ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ samples: string[] }> => {
+  try {
+    const raw = await getConfigValue(ctx, 'knowledge_samples');
+    const arr = raw ? JSON.parse(raw) : [];
+    return { samples: Array.isArray(arr) ? arr.filter((s) => typeof s === 'string') : [] };
+  } catch {
+    return { samples: [] };
+  }
+}, []);
+
+/** Saves the Knowledge chat's suggested questions for the whole deployment. */
+udf.func('setKnowledgeSamples', async (samples: string[], ctx: RayfinContext<Schema, AudienceType.AzureAI>): Promise<{ ok: boolean }> => {
+  const clean = (Array.isArray(samples) ? samples : []).map((s) => String(s ?? '').trim()).filter(Boolean).slice(0, 6).map((s) => s.slice(0, 200));
+  await upsertConfig(ctx, { knowledge_samples: JSON.stringify(clean) });
   return { ok: true };
 }, []);
 

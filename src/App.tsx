@@ -29,6 +29,7 @@ export function App({ auth }: { auth: AuthInfo }) {
   const [settings, setSettings] = useState<SettingsT>(loadSettings);
   const [windowKey, setWindowKey] = useState<WindowKey>('30d');
   const [load, setLoad] = useState<Load>({ status: 'loading' });
+  const [syncing, setSyncing] = useState(false);
   const [section = 'analytics', id, sub, runId] = useRoute();
   const subView: SubView = section === 'analytics' && isSubView(id ?? '') ? (id as SubView) : 'summary';
   const client = auth.kind === 'signed-in' ? auth.client : null;
@@ -72,6 +73,22 @@ export function App({ auth }: { auth: AuthInfo }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // The page Refresh button: in Live mode it first pulls fresh data from Foundry (a sync), then
+  // reloads; in Synthetic mode (or signed out) there is nothing to pull, so it just reloads.
+  const refreshData = useCallback(async () => {
+    if (client && settings.dataMode === 'live') {
+      setSyncing(true);
+      try {
+        const r = await client.functions.syncFoundry.invoke(undefined, { timeoutMs: 250_000 });
+        record('sync_run', `${r.runsSaved} runs saved (refresh)`);
+      } catch {
+        // A failed sync leaves the last-good data in place; the reload below still runs.
+      }
+      setSyncing(false);
+    }
+    await refresh();
+  }, [client, settings.dataMode, refresh, record]);
 
   const dataset = load.status === 'error' ? undefined : load.dataset;
   const view = useMemo(() => (dataset ? makeView(dataset, effectiveSettings, windowKey) : null), [dataset, effectiveSettings, windowKey]);
@@ -133,8 +150,14 @@ export function App({ auth }: { auth: AuthInfo }) {
           </label>
           {dataset && <span className="muted">Source: {dataset.source_label}</span>}
           <span className="muted">Last refresh: {dataset ? fmtDateTime(dataset.loaded_at) : '—'}</span>
-          <button type="button" onClick={() => void refresh()} disabled={load.status === 'loading'} aria-busy={load.status === 'loading'}>
-            {load.status === 'loading' ? 'Refreshing…' : 'Refresh'}
+          <button
+            type="button"
+            onClick={() => void refreshData()}
+            disabled={load.status === 'loading' || syncing}
+            aria-busy={load.status === 'loading' || syncing}
+            title={settings.dataMode === 'live' ? 'Pull the latest data from Foundry, then reload' : 'Reload the data'}
+          >
+            {syncing ? 'Syncing from Foundry…' : load.status === 'loading' ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       )}

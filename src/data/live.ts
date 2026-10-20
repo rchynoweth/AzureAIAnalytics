@@ -23,7 +23,9 @@ type StepRow = { source_id: string; run_source_id: string; ordinal: number; name
 export function liveRawData(agents: AgentRow[], runs: RunRow[], steps: StepRow[]): RawData {
   const tags = (json: string | null | undefined): string[] => {
     try {
-      return json ? JSON.parse(json) : [];
+      const parsed = json ? JSON.parse(json) : [];
+      // Keep short, simple "key:value" tags; drop JSON-looking or oversized metadata values.
+      return Array.isArray(parsed) ? parsed.filter((t) => typeof t === 'string' && t.length <= 60 && !/[{}[\]]/.test(t)) : [];
     } catch {
       return [];
     }

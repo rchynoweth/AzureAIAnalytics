@@ -21,6 +21,10 @@ export type AppFunctionsSchema = {
     input: Record<string, never>;
     output: { ok: boolean; message: string; project: null | string };
   };
+  foundryIdentity: {
+    input: Record<string, never>;
+    output: { name: string; objectId: string; appId: string; tenantId: string; kind: string };
+  };
   syncFoundry: {
     input: Record<string, never>;
     output: { agents: number; runsSaved: number; runsSkipped: number; stepsSaved: number; partial: boolean };
@@ -29,13 +33,33 @@ export type AppFunctionsSchema = {
     input: Record<string, never>;
     output: { collection: string; source: string; status: string; vectorStoreId: null | string; lastActiveAt: null | number; documents: { id: string; name: string; status: string; bytes: null | number; addedAt: null | number; error: null | string }[]; agent: null | { name: string; model: string; instructions: string; version: string }; deployments: string[]; defaultInstructions: string };
   };
+  knowledgeSaveAgent: {
+    input: { name: string; model: string; instructions: string };
+    output: { ok: boolean; message: string };
+  };
   knowledgeDeleteAll: {
     input: Record<string, never>;
     output: { ok: boolean; message: string; agent: boolean; files: number; index: boolean };
   };
+  getFoundryEndpoint: {
+    input: Record<string, never>;
+    output: { endpoint: string; hasSecret: boolean };
+  };
+  setFoundryEndpoint: {
+    input: { endpoint: string };
+    output: { ok: boolean; message: string };
+  };
   getFoundryLinks: {
     input: Record<string, never>;
     output: { agent: string; index: string };
+  };
+  getKnowledgeSamples: {
+    input: Record<string, never>;
+    output: { samples: string[] };
+  };
+  setKnowledgeSamples: {
+    input: { samples: string[] };
+    output: { ok: boolean };
   };
   setFoundryLinks: {
     input: { agent: string; index: string };
